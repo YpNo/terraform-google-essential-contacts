@@ -106,31 +106,3 @@ variable "default_language_tag" {
     error_message = "default_language_tag must be a valid RFC 3066 / BCP 47 language tag, e.g. \"en-US\"."
   }
 }
-
-variable "import_contacts" {
-  description = <<-EOT
-    Pre-existing Essential Contacts to import into Terraform state, declared as a
-    map of "<parent>-<email>" (the resource instance key, which must also be
-    declared in var.essential_contacts) to the contact's fully-qualified
-    resource name ("<parent>/contacts/<contact_id>").
-
-    Discover existing contacts and their IDs with, e.g.:
-      gcloud beta essential-contacts list --organization=<org_id>
-
-    Each listed contact is imported via a dynamic `import` block, so the import
-    is declarative and survives `terraform plan`/`apply` runs. Requires
-    Terraform >= 1.7 (for_each on import blocks).
-  EOT
-
-  type     = map(string)
-  default  = {}
-  nullable = false
-
-  validation {
-    condition = alltrue([
-      for id in values(var.import_contacts) :
-      can(regex("^(organizations|folders|projects)/[^/]+/contacts/[^/]+$", id))
-    ])
-    error_message = "Each import ID must be a contact resource name like \"organizations/123/contacts/456\"."
-  }
-}

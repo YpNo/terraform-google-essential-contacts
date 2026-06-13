@@ -43,7 +43,8 @@ google_essential_contacts_contact.this
 
 ## Prerequisites
 
-- Terraform `>= 1.7.0` (the module uses `for_each` on `import` blocks).
+- Terraform `>= 1.7.0` (required for `for_each` on the `import` blocks used by
+  the import workflow under [Importing existing contacts](#importing-existing-contacts)).
 - A configured `google-beta` provider with permission to manage Essential
   Contacts on each targeted parent (role
   `roles/essentialcontacts.admin` or equivalent).
@@ -101,6 +102,10 @@ inputs = {
 }
 ```
 
+To import pre-existing contacts under Terragrunt, see
+[Importing existing contacts](#importing-existing-contacts) and the runnable
+[`examples/terragrunt`](examples/terragrunt).
+
 ## Configuration
 
 ### Notification categories
@@ -120,47 +125,98 @@ it with other categories is rejected at plan time.
 
 ## Importing existing contacts
 
-The module imports pre-existing contacts declaratively via the
-`import_contacts` variable — no manual `terraform import` commands or hand-edited
-`import` blocks required. The module renders a `for_each` `import` block from the
-map, so imports are reproducible and survive across runs.
+Terraform `import` blocks are a **root-module-only** feature, so this reusable
+module is intentionally kept import-agnostic — it carries no `import` block of
+its own. The import wiring lives wherever the module is the **root** module.
 
-1. List the existing contacts and their IDs:
+A single `import_contacts` variable drives everything, used **the same way** in
+both Terraform and Terragrunt:
 
-   ```bash
-   gcloud beta essential-contacts list --organization=123456789
-   ```
+- Map of `"<parent>-<email>"` (the resource instance key) to the contact's
+  resource name (`"<parent>/contacts/<id>"`).
+- An empty map (the default) imports nothing — so the `import` block is a
+  harmless no-op on a normal run, and you can leave it in place permanently.
+- Every imported key must also be declared in `essential_contacts` so it stays
+  managed after import. The instance key is always `"<parent>-<email>"`.
+- Discover existing contacts and their IDs with:
 
-   Contact names look like `organizations/123456789/contacts/987654321`.
+  ```bash
+  gcloud beta essential-contacts list --organization=123456789
+  ```
 
-2. Declare the contact in `essential_contacts` (so it stays managed) **and** map
-   its instance key to its resource name in `import_contacts`:
+  Contact names look like `organizations/123456789/contacts/987654321`.
 
-   ```hcl
-   module "essential_contacts" {
-     source  = "YpNo/essential-contacts/google"
-     version = "~> 0.1"
+The `import` block is identical in both modes; **only the `to` address differs**,
+because the module is the root under Terragrunt but a child under native
+Terraform.
 
-     essential_contacts = [
-       {
-         parent             = "organizations/123456789"
-         essential_contacts = { "security@example.com" = ["SECURITY"] }
-       },
-     ]
+### Native Terraform (`module { source = ... }`)
 
-     import_contacts = {
-       # "<parent>-<email>" => "<parent>/contacts/<contact_id>"
-       "organizations/123456789-security@example.com" = "organizations/123456789/contacts/987654321"
-     }
-   }
-   ```
+The module is a **child** module, so the `import` block goes in **your own root**
+and targets the resource by its full address (`module.<name>...`). See the
+runnable [`examples/with-import`](examples/with-import).
 
-3. Run `terraform plan` to preview the import, then `terraform apply`. Once
-   applied, the entry can be removed from `import_contacts` — the contact stays
-   managed through `essential_contacts`.
+```hcl
+variable "import_contacts" {
+  type    = map(string)
+  default = {}
+}
 
-The instance key is always `"<parent>-<email>"`, and every key in
-`import_contacts` must also be declared in `essential_contacts`.
+module "essential_contacts" {
+  source  = "YpNo/essential-contacts/google"
+  version = "~> 0.2"
+
+  essential_contacts = [
+    {
+      parent             = "organizations/123456789"
+      essential_contacts = { "security@example.com" = ["SECURITY"] }
+    },
+  ]
+}
+
+import {
+  for_each = var.import_contacts
+
+  to = module.essential_contacts.google_essential_contacts_contact.this[each.key]
+  id = each.value
+}
+```
+
+```bash
+terraform apply -var 'import_contacts={"organizations/123456789-security@example.com"="organizations/123456789/contacts/987654321"}'
+```
+
+### Terragrunt
+
+Terragrunt runs the `source` module as the **root** module in its cache, so an
+`import` block is legal there. Terragrunt can't write one directly, but it can
+`generate` one into the generated root — see the runnable
+[`examples/terragrunt`](examples/terragrunt). The generated file declares the
+`import_contacts` variable and the `import` block, so nothing import-related
+leaks into the module's published inputs. Note the `to` address has **no**
+`module.` prefix here (the module is the root):
+
+```hcl
+generate "essential_contacts_import" {
+  path      = "essential_contacts_import.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<-EOT
+    variable "import_contacts" { type = map(string) default = {} }
+
+    import {
+      for_each = var.import_contacts
+      to       = google_essential_contacts_contact.this[each.key]
+      id       = each.value
+    }
+  EOT
+}
+
+inputs = {
+  import_contacts = {
+    "organizations/123456789-security@example.com" = "organizations/123456789/contacts/987654321"
+  }
+}
+```
 
 ## Testing
 
@@ -173,10 +229,9 @@ terraform test
 ```
 
 The suite (`tests/essential_contacts.tftest.hcl`) covers flattening, the
-`language_tag` fallback, the empty-input no-op, declarative import (via an
-`override_resource` stand-in for the mock provider), and every input validation
+`language_tag` fallback, the empty-input no-op, and every input validation
 (invalid parent, invalid/empty categories, `ALL` exclusivity, invalid email,
-invalid default language tag, malformed import ID).
+invalid default language tag).
 
 ## CI/CD
 
@@ -185,8 +240,10 @@ invalid default language tag, malformed import ID).
 - **GitHub Actions** (`.github/workflows/ci.yml`) runs on every push and PR to
   `main`:
   - `fmt` — `terraform fmt -check`
-  - `validate` — `init` + `validate` on the module and `examples/basic`, across
-    the supported Terraform floor (`1.7.0`) and `latest`
+  - `validate` — `init` + `validate` on the module, `examples/basic` and
+    `examples/with-import`, across the supported Terraform floor (`1.7.0`) and
+    `latest` (the Terragrunt example is HCL config for Terragrunt and is not
+    `terraform validate`-able)
   - `lint` — `tflint` with the GCP ruleset (`.tflint.hcl`)
   - `test` — `terraform test`
   - `docs` — fails if the README `terraform-docs` block is out of date
@@ -209,7 +266,7 @@ invalid default language tag, malformed import ID).
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_google-beta"></a> [google-beta](#provider\_google-beta) | >= 4.62 |
+| <a name="provider_google-beta"></a> [google-beta](#provider\_google-beta) | 7.36.0 |
 
 ## Modules
 
@@ -227,7 +284,6 @@ No modules.
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_default_language_tag"></a> [default\_language\_tag](#input\_default\_language\_tag) | Default preferred language for notifications (RFC 3066 / BCP 47 tag, e.g. "en-US") applied when a group omits 'language\_tag'. | `string` | `"en-US"` | no |
 | <a name="input_essential_contacts"></a> [essential\_contacts](#input\_essential\_contacts) | Essential Contacts to manage, grouped by parent resource.<br/><br/>Each element targets one parent (organization, folder or project) and maps<br/>one or more contact email addresses to the notification categories they<br/>should be subscribed to.<br/><br/>Attributes:<br/>  - parent:             Resource the contacts are attached to. One of<br/>                        "organizations/<id>", "folders/<id>" or<br/>                        "projects/<id-or-number>".<br/>  - essential\_contacts: Map of contact email address to the list of<br/>                        notification categories to subscribe to. Valid<br/>                        categories: ALL, SUSPENSION, SECURITY, TECHNICAL,<br/>                        BILLING, LEGAL, PRODUCT\_UPDATES, TECHNICAL\_INCIDENTS.<br/>                        "ALL" must be used on its own.<br/>  - language\_tag:       Optional preferred language for notifications as an<br/>                        RFC 3066 / BCP 47 tag (e.g. "en-US"). Falls back to<br/>                        var.default\_language\_tag when omitted. | <pre>list(object({<br/>    parent             = string<br/>    essential_contacts = map(list(string))<br/>    language_tag       = optional(string)<br/>  }))</pre> | `[]` | no |
-| <a name="input_import_contacts"></a> [import\_contacts](#input\_import\_contacts) | Pre-existing Essential Contacts to import into Terraform state, declared as a<br/>map of "<parent>-<email>" (the resource instance key, which must also be<br/>declared in var.essential\_contacts) to the contact's fully-qualified<br/>resource name ("<parent>/contacts/<contact\_id>").<br/><br/>Discover existing contacts and their IDs with, e.g.:<br/>  gcloud beta essential-contacts list --organization=<org\_id><br/><br/>Each listed contact is imported via a dynamic `import` block, so the import<br/>is declarative and survives `terraform plan`/`apply` runs. Requires<br/>Terraform >= 1.7 (for\_each on import blocks). | `map(string)` | `{}` | no |
 
 ## Outputs
 
@@ -243,7 +299,7 @@ This module is licensed under the **Apache License 2.0** — see the
 [LICENSE](LICENSE) and [NOTICE](NOTICE) files for details.
 
 ```
-Copyright 2026 YpNo
+Copyright 2026 - YpNo
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
