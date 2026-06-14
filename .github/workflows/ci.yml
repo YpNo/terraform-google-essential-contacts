@@ -1,19 +1,23 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # Checks + tests run on every PR targeting main.
   pull_request:
     branches: [main]
+  # Reusable: the release workflow calls this as a gate before tagging, so main
+  # is never released untested. Direct push to main is intentionally NOT a
+  # trigger here — release.yml runs the gate on merge.
+  workflow_call:
   workflow_dispatch:
 
 # Least-privilege default token; jobs opt into more only if needed.
 permissions:
   contents: read
 
-# Cancel superseded runs on the same ref to save CI minutes.
+# Cancel superseded runs on the same ref to save CI minutes. Keyed by the head
+# ref + event so a PR run and a release-gate run don't cancel each other.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -87,16 +91,30 @@ jobs:
   docs:
     name: Docs drift
     runs-on: ubuntu-latest
+    # Pin terraform-docs explicitly: the terraform-docs/gh-actions image bundles
+    # its own (older) binary with no override, and its table-separator style
+    # differs from newer releases — causing spurious drift. Keep this in lockstep
+    # with the pre-commit hook rev in .pre-commit-config.yaml.
+    env:
+      TERRAFORM_DOCS_VERSION: v0.23.0
+      TERRAFORM_DOCS_SHA256: 80b8cd1d08b44e1182a39177adafc6901650a22e0a7f52cfeffcdbd44e8b0938
     steps:
       - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
-      - name: Verify README terraform-docs block is up to date
-        uses: terraform-docs/gh-actions@6de6da0cefcc6b4b7a5cbea4d79d97060733093c # v1.4.1
-        with:
-          working-dir: .
-          output-file: README.md
-          output-method: inject
-          git-push: false
-          fail-on-diff: true
+      - name: Install terraform-docs (pinned + checksum-verified)
+        run: |
+          tarball="terraform-docs-${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz"
+          curl -fsSLo "$tarball" \
+            "https://github.com/terraform-docs/terraform-docs/releases/download/${TERRAFORM_DOCS_VERSION}/${tarball}"
+          echo "${TERRAFORM_DOCS_SHA256}  ${tarball}" | sha256sum --check --strict
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$tarball" terraform-docs
+          install -m 0755 terraform-docs "$HOME/.local/bin/terraform-docs"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          rm -f "$tarball" terraform-docs
+      - name: Regenerate README
+        run: terraform-docs markdown table --output-mode inject --output-file README.md .
+      - name: Fail on docs drift
+        run: git diff --exit-code -- README.md
 
   security:
     name: Trivy

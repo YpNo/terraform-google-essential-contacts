@@ -237,8 +237,8 @@ invalid default language tag).
 
 - **Pre-commit** (`.pre-commit-config.yaml`) runs `terraform fmt`,
   `terraform validate`, `tflint` and `terraform-docs` (README injection).
-- **GitHub Actions** (`.github/workflows/ci.yml`) runs on every push and PR to
-  `main`:
+- **CI** (`.github/workflows/ci.yml`) runs on every **pull request** to `main`
+  (and is reused as a release gate, see below):
   - `fmt` — `terraform fmt -check`
   - `validate` — `init` + `validate` on the module, `examples/basic` and
     `examples/with-import`, across the supported Terraform floor (`1.7.0`) and
@@ -248,10 +248,24 @@ invalid default language tag).
   - `test` — `terraform test`
   - `docs` — fails if the README `terraform-docs` block is out of date
   - `security` — Trivy IaC misconfiguration scan (fails on HIGH/CRITICAL)
+- **Release** (`.github/workflows/release.yml`) runs on **merge to `main`** and,
+  in a single run:
+  1. re-runs the full CI suite as a gate (never releases an untested `main`);
+  2. runs [`release-it`](https://github.com/release-it/release-it) with the
+     `@release-it/conventional-changelog` plugin (config in `.release-it.json`),
+     which owns the whole release: it derives the next [SemVer](https://semver.org)
+     from [Conventional Commits](https://www.conventionalcommits.org)
+     (`feat:` → minor, `fix:`/`perf:` → patch, `!` / `BREAKING CHANGE` → major),
+     creates and pushes the tag, and cuts a GitHub Release. The Terraform
+     Registry ingests the release automatically.
 
-  All actions are pinned to commit SHAs and kept current by Renovate
-  (`helpers:pinGitHubActionDigests`).
-- Releases follow [Semantic Versioning](https://semver.org); see
+  `release-it` runs on every merge with new commits; `git.requireCommits` makes
+  it skip cleanly when nothing changed since the last tag. Note it does **not**
+  skip docs/chore-only merges — those still cut a patch release. A run can also
+  be triggered manually via `workflow_dispatch`. `release-it` is fetched on
+  demand with `npx` (versions pinned in the workflow `env`); GitHub Actions are
+  pinned to commit SHAs and kept current by Renovate
+  (`helpers:pinGitHubActionDigests`). Notable changes are recorded in
   [CHANGELOG.md](CHANGELOG.md).
 
 <!-- BEGIN_TF_DOCS -->
