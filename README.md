@@ -4,7 +4,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/YpNo/terraform-google-essential-contacts?sort=semver&logo=github)](https://github.com/YpNo/terraform-google-essential-contacts/releases)
 [![Terraform Registry](https://img.shields.io/badge/terraform-registry-7B42BC?logo=terraform&logoColor=white)](https://registry.terraform.io/modules/YpNo/essential-contacts/google/latest)
 [![Terraform](https://img.shields.io/badge/terraform-%3E%3D_1.7.0-7B42BC?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform/install)
-[![Provider](https://img.shields.io/badge/google--beta-%3E%3D_4.62-4285F4?logo=googlecloud&logoColor=white)](https://registry.terraform.io/providers/hashicorp/google-beta/latest)
+[![Provider](https://img.shields.io/badge/google--beta-%3E%3D_7.33-4285F4?logo=googlecloud&logoColor=white)](https://registry.terraform.io/providers/hashicorp/google-beta/latest)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-FAB040?logo=pre-commit&logoColor=white)](https://pre-commit.com/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -21,9 +21,10 @@ takes a parent-grouped declaration of contacts and creates one
 - One declarative input groups contacts per parent resource.
 - The same email address can be attached to several parents without collision.
 - Inputs are validated at plan time (parent format, email format, notification
-  categories, `ALL` exclusivity, duplicates) so misconfiguration fails fast
-  rather than at the GCP API.
-- `language_tag` defaults are configurable and applied per group.
+  categories, `ALL` exclusivity, deletion policy, duplicates) so misconfiguration
+  fails fast rather than at the GCP API.
+- `language_tag` and `deletion_policy` have module-wide defaults, each
+  overridable (`language_tag` per group, `deletion_policy` per contact).
 
 ## Architecture
 
@@ -57,23 +58,31 @@ provider "google-beta" {}
 
 module "essential_contacts" {
   source  = "YpNo/essential-contacts/google"
-  version = "~> 0.1"
+  version = "~> 0.2"
 
-  # Optional, defaults to "en-US"
-  default_language_tag = "en-US"
+  # Optional module-wide defaults.
+  default_language_tag    = "en-US"   # default "en-US"
+  default_deletion_policy = "DELETE"  # default "DELETE"
 
   essential_contacts = [
     {
       parent = "organizations/123456789"
       essential_contacts = {
-        "all@example.com"      = ["ALL"]
-        "security@example.com" = ["SECURITY", "LEGAL"]
+        "all@example.com" = {
+          notification_category_subscriptions = ["ALL"]
+        }
+        "security@example.com" = {
+          notification_category_subscriptions = ["SECURITY", "LEGAL"]
+          deletion_policy                     = "PREVENT" # per-contact override
+        }
       }
     },
     {
       parent = "folders/469120895423"
       essential_contacts = {
-        "infrastructure@example.com" = ["SECURITY", "TECHNICAL", "TECHNICAL_INCIDENTS", "PRODUCT_UPDATES"]
+        "infrastructure@example.com" = {
+          notification_category_subscriptions = ["SECURITY", "TECHNICAL", "TECHNICAL_INCIDENTS", "PRODUCT_UPDATES"]
+        }
       }
       language_tag = "fr-FR"
     },
@@ -95,7 +104,9 @@ inputs = {
     {
       parent = "organizations/${local.global_config.locals.org_id}"
       essential_contacts = {
-        "ypno.gh+security@gmail.com" = ["SECURITY", "LEGAL"]
+        "ypno.gh+security@gmail.com" = {
+          notification_category_subscriptions = ["SECURITY", "LEGAL"]
+        }
       }
     },
   ]
@@ -122,6 +133,21 @@ it with other categories is rejected at plan time.
 
 `parent` must be one of `organizations/<id>`, `folders/<id>` or
 `projects/<id-or-number>`.
+
+### Deletion policy
+
+Controls what Terraform does when a contact would be destroyed. Set the
+module-wide default with `default_deletion_policy` and override it per contact
+with `deletion_policy`:
+
+| Value     | Behavior                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `DELETE`  | Destroying the resource deletes the contact via the API (default).   |
+| `PREVENT` | A `destroy`/`apply` that would delete the contact fails instead.     |
+| `ABANDON` | The contact is removed from Terraform state without an API deletion. |
+
+> Requires `google-beta >= 7.33` — `deletion_policy` was added to
+> `google_essential_contacts_contact` in that release.
 
 ## Importing existing contacts
 
@@ -168,8 +194,10 @@ module "essential_contacts" {
 
   essential_contacts = [
     {
-      parent             = "organizations/123456789"
-      essential_contacts = { "security@example.com" = ["SECURITY"] }
+      parent = "organizations/123456789"
+      essential_contacts = {
+        "security@example.com" = { notification_category_subscriptions = ["SECURITY"] }
+      }
     },
   ]
 }
@@ -229,9 +257,10 @@ terraform test
 ```
 
 The suite (`tests/essential_contacts.tftest.hcl`) covers flattening, the
-`language_tag` fallback, the empty-input no-op, and every input validation
-(invalid parent, invalid/empty categories, `ALL` exclusivity, invalid email,
-invalid default language tag).
+`language_tag` and `deletion_policy` fallbacks/overrides, the empty-input no-op,
+and every input validation (invalid parent, invalid/empty categories, `ALL`
+exclusivity, invalid email, invalid deletion policy, invalid default language
+tag and deletion policy).
 
 ## CI/CD
 
@@ -274,13 +303,13 @@ invalid default language tag).
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.7.0 |
-| <a name="requirement_google-beta"></a> [google-beta](#requirement\_google-beta) | >= 4.62 |
+| <a name="requirement_google-beta"></a> [google-beta](#requirement\_google-beta) | >= 7.33 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_google-beta"></a> [google-beta](#provider\_google-beta) | 7.36.0 |
+| <a name="provider_google-beta"></a> [google-beta](#provider\_google-beta) | >= 7.33 |
 
 ## Modules
 
@@ -296,8 +325,9 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_default_deletion_policy"></a> [default\_deletion\_policy](#input\_default\_deletion\_policy) | Module-wide default for how Terraform treats deletion of a contact, applied<br/>when a contact omits 'deletion\_policy'. One of:<br/>  - DELETE:  destroying the resource deletes the contact (default).<br/>  - PREVENT: a destroy/apply that would delete the contact fails instead.<br/>  - ABANDON: the contact is removed from Terraform state without being<br/>             deleted in the API. | `string` | `"DELETE"` | no |
 | <a name="input_default_language_tag"></a> [default\_language\_tag](#input\_default\_language\_tag) | Default preferred language for notifications (RFC 3066 / BCP 47 tag, e.g. "en-US") applied when a group omits 'language\_tag'. | `string` | `"en-US"` | no |
-| <a name="input_essential_contacts"></a> [essential\_contacts](#input\_essential\_contacts) | Essential Contacts to manage, grouped by parent resource.<br/><br/>Each element targets one parent (organization, folder or project) and maps<br/>one or more contact email addresses to the notification categories they<br/>should be subscribed to.<br/><br/>Attributes:<br/>  - parent:             Resource the contacts are attached to. One of<br/>                        "organizations/<id>", "folders/<id>" or<br/>                        "projects/<id-or-number>".<br/>  - essential\_contacts: Map of contact email address to the list of<br/>                        notification categories to subscribe to. Valid<br/>                        categories: ALL, SUSPENSION, SECURITY, TECHNICAL,<br/>                        BILLING, LEGAL, PRODUCT\_UPDATES, TECHNICAL\_INCIDENTS.<br/>                        "ALL" must be used on its own.<br/>  - language\_tag:       Optional preferred language for notifications as an<br/>                        RFC 3066 / BCP 47 tag (e.g. "en-US"). Falls back to<br/>                        var.default\_language\_tag when omitted. | <pre>list(object({<br/>    parent             = string<br/>    essential_contacts = map(list(string))<br/>    language_tag       = optional(string)<br/>  }))</pre> | `[]` | no |
+| <a name="input_essential_contacts"></a> [essential\_contacts](#input\_essential\_contacts) | Essential Contacts to manage, grouped by parent resource.<br/><br/>Each element targets one parent (organization, folder or project) and maps<br/>one or more contact email addresses to their configuration.<br/><br/>Attributes:<br/>  - parent:             Resource the contacts are attached to. One of<br/>                        "organizations/<id>", "folders/<id>" or<br/>                        "projects/<id-or-number>".<br/>  - essential\_contacts: Map of contact email address to an object:<br/>      - notification\_category\_subscriptions: List of notification categories<br/>          to subscribe to. Valid categories: ALL, SUSPENSION, SECURITY,<br/>          TECHNICAL, BILLING, LEGAL, PRODUCT\_UPDATES, TECHNICAL\_INCIDENTS.<br/>          "ALL" must be used on its own.<br/>      - deletion\_policy: Optional per-contact override of how Terraform<br/>          treats deletion (PREVENT, ABANDON or DELETE). Falls back to<br/>          var.default\_deletion\_policy when omitted.<br/>  - language\_tag:       Optional preferred language for notifications as an<br/>                        RFC 3066 / BCP 47 tag (e.g. "en-US"). Falls back to<br/>                        var.default\_language\_tag when omitted. | <pre>list(object({<br/>    parent = string<br/>    essential_contacts = map(object({<br/>      notification_category_subscriptions = list(string)<br/>      deletion_policy                     = optional(string)<br/>    }))<br/>    language_tag = optional(string)<br/>  }))</pre> | `[]` | no |
 
 ## Outputs
 

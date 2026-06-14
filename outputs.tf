@@ -7,6 +7,7 @@ output "essential_contacts" {
       email                               = contact.email
       language_tag                        = contact.language_tag
       notification_category_subscriptions = contact.notification_category_subscriptions
+      deletion_policy                     = contact.deletion_policy
     }
   }
 }

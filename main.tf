@@ -4,11 +4,12 @@ locals {
   # language tag falls back to the module default when a group omits it.
   contacts = flatten([
     for group in var.essential_contacts : [
-      for email, categories in group.essential_contacts : {
+      for email, contact in group.essential_contacts : {
         parent                              = group.parent
         email                               = email
         language_tag                        = coalesce(group.language_tag, var.default_language_tag)
-        notification_category_subscriptions = categories
+        notification_category_subscriptions = contact.notification_category_subscriptions
+        deletion_policy                     = coalesce(contact.deletion_policy, var.default_deletion_policy)
       }
     ]
   ])
@@ -30,4 +31,5 @@ resource "google_essential_contacts_contact" "this" {
   email                               = each.value.email
   language_tag                        = each.value.language_tag
   notification_category_subscriptions = each.value.notification_category_subscriptions
+  deletion_policy                     = each.value.deletion_policy
 }

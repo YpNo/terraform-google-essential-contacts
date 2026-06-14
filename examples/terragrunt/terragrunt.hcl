@@ -66,7 +66,9 @@ inputs = {
     {
       parent = "organizations/123456789"
       essential_contacts = {
-        "security@example.com" = ["SECURITY"]
+        "security@example.com" = {
+          notification_category_subscriptions = ["SECURITY"]
+        }
       }
     },
   ]

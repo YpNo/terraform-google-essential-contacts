@@ -7,7 +7,7 @@
 mock_provider "google-beta" {}
 
 # ---------------------------------------------------------------------------
-# Happy path: flattening, keying and language_tag defaulting.
+# Happy path: flattening, keying, language_tag and deletion_policy defaulting.
 # ---------------------------------------------------------------------------
 run "flattens_contacts_and_applies_defaults" {
   command = plan
@@ -17,8 +17,14 @@ run "flattens_contacts_and_applies_defaults" {
       {
         parent = "organizations/123456789"
         essential_contacts = {
-          "all@example.com"      = ["ALL"]
-          "security@example.com" = ["SECURITY", "LEGAL"]
+          "all@example.com" = {
+            notification_category_subscriptions = ["ALL"]
+          }
+          "security@example.com" = {
+            notification_category_subscriptions = ["SECURITY", "LEGAL"]
+            # Per-contact override of the module-wide deletion policy.
+            deletion_policy = "PREVENT"
+          }
         }
         language_tag = "fr-FR"
       },
@@ -27,7 +33,9 @@ run "flattens_contacts_and_applies_defaults" {
         # Omits language_tag -> falls back to default_language_tag.
         parent = "folders/987654321"
         essential_contacts = {
-          "security@example.com" = ["SECURITY"]
+          "security@example.com" = {
+            notification_category_subscriptions = ["SECURITY"]
+          }
         }
       },
     ]
@@ -52,6 +60,16 @@ run "flattens_contacts_and_applies_defaults" {
     condition     = google_essential_contacts_contact.this["organizations/123456789-all@example.com"].parent == "organizations/123456789"
     error_message = "The parent must be propagated to the contact resource."
   }
+
+  assert {
+    condition     = google_essential_contacts_contact.this["organizations/123456789-security@example.com"].deletion_policy == "PREVENT"
+    error_message = "An explicit per-contact deletion_policy must be honored."
+  }
+
+  assert {
+    condition     = google_essential_contacts_contact.this["organizations/123456789-all@example.com"].deletion_policy == "DELETE"
+    error_message = "A missing deletion_policy must fall back to default_deletion_policy (DELETE)."
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -64,8 +82,10 @@ run "default_language_tag_is_overridable" {
     default_language_tag = "es-ES"
     essential_contacts = [
       {
-        parent             = "projects/my-project"
-        essential_contacts = { "ops@example.com" = ["TECHNICAL"] }
+        parent = "projects/my-project"
+        essential_contacts = {
+          "ops@example.com" = { notification_category_subscriptions = ["TECHNICAL"] }
+        }
       },
     ]
   }
@@ -73,6 +93,30 @@ run "default_language_tag_is_overridable" {
   assert {
     condition     = google_essential_contacts_contact.this["projects/my-project-ops@example.com"].language_tag == "es-ES"
     error_message = "default_language_tag override must be applied when a group omits language_tag."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# default_deletion_policy is configurable and applied when a contact omits it.
+# ---------------------------------------------------------------------------
+run "default_deletion_policy_is_overridable" {
+  command = plan
+
+  variables {
+    default_deletion_policy = "ABANDON"
+    essential_contacts = [
+      {
+        parent = "projects/my-project"
+        essential_contacts = {
+          "ops@example.com" = { notification_category_subscriptions = ["TECHNICAL"] }
+        }
+      },
+    ]
+  }
+
+  assert {
+    condition     = google_essential_contacts_contact.this["projects/my-project-ops@example.com"].deletion_policy == "ABANDON"
+    error_message = "default_deletion_policy override must be applied when a contact omits deletion_policy."
   }
 }
 
@@ -101,8 +145,10 @@ run "rejects_invalid_parent" {
   variables {
     essential_contacts = [
       {
-        parent             = "billingAccounts/000-111"
-        essential_contacts = { "a@example.com" = ["ALL"] }
+        parent = "billingAccounts/000-111"
+        essential_contacts = {
+          "a@example.com" = { notification_category_subscriptions = ["ALL"] }
+        }
       },
     ]
   }
@@ -119,8 +165,10 @@ run "rejects_invalid_category" {
   variables {
     essential_contacts = [
       {
-        parent             = "organizations/1"
-        essential_contacts = { "a@example.com" = ["NOT_A_CATEGORY"] }
+        parent = "organizations/1"
+        essential_contacts = {
+          "a@example.com" = { notification_category_subscriptions = ["NOT_A_CATEGORY"] }
+        }
       },
     ]
   }
@@ -137,8 +185,10 @@ run "rejects_all_combined_with_others" {
   variables {
     essential_contacts = [
       {
-        parent             = "organizations/1"
-        essential_contacts = { "a@example.com" = ["ALL", "SECURITY"] }
+        parent = "organizations/1"
+        essential_contacts = {
+          "a@example.com" = { notification_category_subscriptions = ["ALL", "SECURITY"] }
+        }
       },
     ]
   }
@@ -155,8 +205,10 @@ run "rejects_empty_category_list" {
   variables {
     essential_contacts = [
       {
-        parent             = "organizations/1"
-        essential_contacts = { "a@example.com" = [] }
+        parent = "organizations/1"
+        essential_contacts = {
+          "a@example.com" = { notification_category_subscriptions = [] }
+        }
       },
     ]
   }
@@ -173,8 +225,33 @@ run "rejects_invalid_email" {
   variables {
     essential_contacts = [
       {
-        parent             = "organizations/1"
-        essential_contacts = { "not-an-email" = ["ALL"] }
+        parent = "organizations/1"
+        essential_contacts = {
+          "not-an-email" = { notification_category_subscriptions = ["ALL"] }
+        }
+      },
+    ]
+  }
+
+  expect_failures = [var.essential_contacts]
+}
+
+# ---------------------------------------------------------------------------
+# Validation: invalid per-contact deletion_policy.
+# ---------------------------------------------------------------------------
+run "rejects_invalid_deletion_policy" {
+  command = plan
+
+  variables {
+    essential_contacts = [
+      {
+        parent = "organizations/1"
+        essential_contacts = {
+          "a@example.com" = {
+            notification_category_subscriptions = ["ALL"]
+            deletion_policy                     = "NUKE"
+          }
+        }
       },
     ]
   }
@@ -194,4 +271,18 @@ run "rejects_invalid_default_language_tag" {
   }
 
   expect_failures = [var.default_language_tag]
+}
+
+# ---------------------------------------------------------------------------
+# Validation: bad default_deletion_policy.
+# ---------------------------------------------------------------------------
+run "rejects_invalid_default_deletion_policy" {
+  command = plan
+
+  variables {
+    default_deletion_policy = "NUKE"
+    essential_contacts      = []
+  }
+
+  expect_failures = [var.default_deletion_policy]
 }

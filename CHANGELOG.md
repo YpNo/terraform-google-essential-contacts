@@ -7,6 +7,23 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** each `essential_contacts[*].essential_contacts` map value is now
+  an object `{ notification_category_subscriptions = list(string), deletion_policy
+  = optional(string) }` instead of a bare list of categories. Migration: wrap the
+  category list, e.g. `"a@x.com" = ["ALL"]` becomes
+  `"a@x.com" = { notification_category_subscriptions = ["ALL"] }`.
+- **BREAKING:** minimum `google-beta` provider raised from `>= 4.62` to `>= 7.33`
+  (the release that added `deletion_policy` to `google_essential_contacts_contact`).
+
+### Added
+
+- `deletion_policy` support (`PREVENT` / `ABANDON` / `DELETE`): a module-wide
+  `default_deletion_policy` variable, overridable per contact via the contact
+  object's optional `deletion_policy`. Exposed on the `essential_contacts` output
+  and validated at plan time.
+
 ### Fixed
 
 - Imports no longer fail with "Import blocks are only allowed in the root
