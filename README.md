@@ -57,8 +57,8 @@ google_essential_contacts_contact.this
 provider "google-beta" {}
 
 module "essential_contacts" {
-  source  = "YpNo/essential-contacts/google"
-  version = "~> 0.2"
+  source  = "github.com/YpNo/terraform-google-essential-contacts"
+  version = "~> 0.1"
 
   # Optional module-wide defaults.
   default_language_tag    = "en-US"   # default "en-US"
@@ -96,7 +96,7 @@ A runnable example lives in [`examples/basic`](examples/basic).
 
 ```hcl
 terraform {
-  source = "tfr:///YpNo/essential-contacts/google?version=0.1.0"
+  source = "github.com/YpNo/terraform-google-essential-contacts?version=0.1.0"
 }
 
 inputs = {
@@ -104,7 +104,7 @@ inputs = {
     {
       parent = "organizations/${local.global_config.locals.org_id}"
       essential_contacts = {
-        "ypno.gh+security@gmail.com" = {
+        "user@example.com" = {
           notification_category_subscriptions = ["SECURITY", "LEGAL"]
         }
       }
@@ -189,8 +189,8 @@ variable "import_contacts" {
 }
 
 module "essential_contacts" {
-  source  = "YpNo/essential-contacts/google"
-  version = "~> 0.2"
+  source  = "github.com/YpNo/terraform-google-essential-contacts"
+  version = "~> 0.1"
 
   essential_contacts = [
     {

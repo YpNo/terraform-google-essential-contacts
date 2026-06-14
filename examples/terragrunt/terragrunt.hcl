@@ -19,7 +19,7 @@
 # Requires Terraform >= 1.7 (for_each on import blocks).
 
 terraform {
-  source = "tfr:///YpNo/essential-contacts/google?version=0.2.0"
+  source = "github.com/YpNo/terraform-google-essential-contacts?version=0.1.0"
 }
 
 # Emits the import wiring into the generated root module. Identical in shape to
