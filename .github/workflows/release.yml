@@ -1,0 +1,55 @@
+name: Release
+
+# Triggered when a PR is merged (push to main). In one run:
+#   1. checks  — re-run the full CI suite as a gate (reusable ci.yml)
+#   2. release — release-it (+ @release-it/conventional-changelog) owns every
+#                step: derives the SemVer bump from Conventional Commits, creates
+#                + pushes the tag, and cuts a GitHub Release.
+#
+# release-it runs on every merge with new commits. `git.requireCommits` makes it
+# skip cleanly when there is nothing new since the last tag (e.g. a re-run). Note
+# it does NOT skip docs/chore-only merges — those still cut a patch release. The
+# Terraform Registry ingests the resulting GitHub Release automatically.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual release run
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Gate: never release an untested main.
+  checks:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  release:
+    name: Tag & Release
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag and create the release
+    # Pinned here so Renovate/maintainers bump them in one place.
+    env:
+      RELEASE_IT_VERSION: 20.2.0
+      RELEASE_IT_CHANGELOG_VERSION: 11.0.1
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          fetch-depth: 0 # full history + tags for version detection
+
+      - name: Run release-it
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes \
+            -p "release-it@${RELEASE_IT_VERSION}" \
+            -p "@release-it/conventional-changelog@${RELEASE_IT_CHANGELOG_VERSION}" \
+            release-it --ci

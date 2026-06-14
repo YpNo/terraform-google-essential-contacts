@@ -1,6 +1,12 @@
 # Local .terraform directories
 .terraform/
 
+# Dependency lock file: this repo is a reusable module, not a root config.
+# Terraform only reads the lock file from the root module, so one committed here
+# (or in examples/) is inert for consumers and would just go stale. Commit
+# .terraform.lock.hcl in your root/deployment configs instead, not in modules.
+.terraform.lock.hcl
+
 # .tfstate files
 *.tfstate
 *.tfstate.*
